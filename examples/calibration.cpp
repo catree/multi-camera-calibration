@@ -44,7 +44,7 @@ void CalibrationMethod::addImages(std::vector<uint16_t*> depths,  std::vector<ui
         for (auto kp : cv_keypoints1) {
             auto yi = clampi((int)std::round(kp.pt.y), h);
             auto xi = clampi((int)std::round(kp.pt.x), w);
-            if (depth[yi*w + xi] && depth[yi*w + xi] < 2000)
+            if (depth[yi*w + xi] && depth[yi*w + xi] < 1500)
                 cv_keypoints2.push_back(kp);
         }
         cv_detect.compute(colorImage, cv_keypoints2, cv_desc1);
@@ -62,6 +62,8 @@ void CalibrationMethod::addImages(std::vector<uint16_t*> depths,  std::vector<ui
         for (int index2 = index + 1; index2 < n; index2++) {
             cv::BFMatcher matcher(cv::NORM_HAMMING, true);
             std::vector< cv::DMatch > cv_matches;
+			if (desc[index].cols != desc[index2].cols)
+				continue;
 
             matcher.match(desc[index], desc[index2], cv_matches);
             for (const auto & match : cv_matches) {

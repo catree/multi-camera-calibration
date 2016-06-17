@@ -47,12 +47,12 @@ int main(int argc, char * argv[]) try
     for(auto dev : devices)
     {
         std::cout << "Starting " << dev->get_name() << "... ";
-        dev->enable_stream(rs::stream::depth, rs::preset::best_quality);
-        dev->enable_stream(rs::stream::color, rs::preset::best_quality);
+		dev->enable_stream(rs::stream::depth, 480, 360, rs::format::z16, 30);
+		dev->enable_stream(rs::stream::color, 640, 480, rs::format::rgb8, 30);
 
         dev->start();
         dev->set_option(rs::option::r200_lr_auto_exposure_enabled, 1.0);
-        rs_apply_depth_control_preset((rs_device*)dev,4 ); //4 or 5
+        rs_apply_depth_control_preset((rs_device*)dev,5 ); //4 or 5
         std::cout << "done." << std::endl;
     }
 

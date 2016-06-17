@@ -71,7 +71,7 @@
     <Import Project="..\sample.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros">
-    <NuGetPackageImportStamp>8385a54d</NuGetPackageImportStamp>
+    <NuGetPackageImportStamp>86c2e392</NuGetPackageImportStamp>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
