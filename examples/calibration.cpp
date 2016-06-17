@@ -130,32 +130,29 @@ bool CalibrationMethod::solvePose()
     for (int i = 1; i < visited.size(); i++)
         if (visited[i] < 0)
             return false;
-    auto allToZero = false;
 
-    // TODO FIXME revisit this logic
-    while (!allToZero) {
-        for (int index2 = 1; index2 < visited.size(); index2++) {
-            if (visited[index2] == 0 && visitedPose[index2] == -1) {
-                auto pairPose = computePose(visited[index2], index2);
-                poses[index2] = linalg::mul(pairPose,poses[index2]);
-                visitedPose[index2] = 0;
-                for (int i = 0; i < visited.size(); i++) {
-                    if (visited[i] == index2) {
-                        auto pairPoseChild = computePose(index2, i);
-                        poses[i] = linalg::mul(poses[index2], pairPoseChild);
-                        visited[i] = visited[index2];
-                        visitedPose[i] = 0;
+    std::vector<std::vector<int>> pathStacks(visited.size()); // could have one but this is simple and equiv.
+    for (int index = 1; index < visited.size(); index++){
+        auto target = visited[index];
+        pathStacks[index].push_back(target);
 
-                    }
-                }
-            }
-        }
+        while (target != 0)  {
+            target = visited[target];
+            pathStacks[index].push_back(target);
 
-        allToZero = true;
-        for (int i = 1; i < visitedPose.size(); i++)
-            if (visitedPose[i] != 0)
-                allToZero = false;
+        } 
     }
+    for (int index = 1; index < visited.size(); index++) {
+        float4x4 pose= poses[index];
+        auto prevIdx = index;
+        while (pathStacks[index].size()) {
+            pose = linalg::mul(pose,computePose(pathStacks[index].front(), prevIdx));
+            prevIdx = pathStacks[index].back();
+            pathStacks[index].erase(pathStacks[index].begin()+pathStacks[index].size()-1);
+        }
+        poses[index] = pose;
+    }
+
     return true;
 }
 

@@ -52,7 +52,7 @@ int main(int argc, char * argv[]) try
 
         dev->start();
         dev->set_option(rs::option::r200_lr_auto_exposure_enabled, 1.0);
-        rs_apply_depth_control_preset((rs_device*)dev, 5); //4 or 5
+        rs_apply_depth_control_preset((rs_device*)dev,4 ); //4 or 5
         std::cout << "done." << std::endl;
     }
 
