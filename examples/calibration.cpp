@@ -5,15 +5,15 @@
 const int Z_THRESH = 1500;
 const int SCORE_DIVIDER = 6;
 const float REPROJ_CONV = 25;
-const int ITER_MAX = 250;
+const int ITER_MAX = 0;
 
 static float computeReprojectionError(float3 target, float fx, float fy, float ppx, float ppy, float3 source, float4x4 & pose)
 {
     using linalg::aliases::float4;
-    auto tPt = float3(ppx,ppy,0.0) + (target / target.z * fx);
+    auto tPt = float3(ppx,ppy,0.0) + ((target / target.z) * fx);
     float4 depth_point_h = { source.x, source.y, source.z, 1.0f };
     auto src_tPt_Frame = linalg::mul(pose, depth_point_h);
-    auto sPt = float4(ppx, ppy, 0.0,0.0) + (src_tPt_Frame / src_tPt_Frame.z * fx);
+    auto sPt = float4(ppx, ppy, 0.0,0.0) + ((src_tPt_Frame / src_tPt_Frame.z) * fx);
 
     auto sqr = [](float x){return x*x; };
     return std::sqrtf(sqr(tPt[0] - sPt[0]) + sqr(tPt[1] - sPt[1]));
