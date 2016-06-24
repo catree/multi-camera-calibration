@@ -47,7 +47,7 @@ int main(int argc, char * argv[]) try
     for(auto dev : devices)
     {
         std::cout << "Starting " << dev->get_name() << "... ";
-		dev->enable_stream(rs::stream::depth, 480, 360, rs::format::z16, 30);
+		dev->enable_stream(rs::stream::depth, 320, 240, rs::format::z16, 30);
 		dev->enable_stream(rs::stream::color, 640, 480, rs::format::rgb8, 30);
 
         dev->start();
@@ -105,7 +105,7 @@ int main(int argc, char * argv[]) try
         std::vector<float> pys;
         for (auto dev : devices)
         {
-            dev->poll_for_frames();
+            dev->wait_for_frames();
             const auto c = dev->get_stream_intrinsics(rs::stream::rectified_color), d = dev->get_stream_intrinsics(rs::stream::depth_aligned_to_rectified_color);
             buffers[i++].show(*dev, rs::stream::rectified_color, x, 0, perTextureWidth, perTextureHeight);
             buffers[i++].show(*dev, rs::stream::depth_aligned_to_rectified_color, x, perTextureHeight, perTextureWidth, perTextureHeight);
@@ -148,7 +148,7 @@ int main(int argc, char * argv[]) try
             glPointSize(2);
             glEnable(GL_DEPTH_TEST);
             glBegin(GL_POINTS);
-            for (int i = 0; i < devices.size(); i++)
+            for (size_t i = 0; i < devices.size(); i++)
             {
                 auto dev = devices[i];
                 rs::intrinsics depth_intrin = dev->get_stream_intrinsics(rs::stream::depth_aligned_to_rectified_color);

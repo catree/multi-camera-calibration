@@ -1,8 +1,11 @@
 #include "calibration.h"
 #include <opencv\cv.h>
 #include <Eigen\Dense>
-void CalibrationMethod::addImages(std::vector<uint16_t*> depths,  std::vector<uint8_t*> colors,  int w,  int h,
-     std::vector<float> fxs,  std::vector<float> fys,  std::vector<float> pxs,  std::vector<float> pys)
+
+const int Z_THRESH = 2000;
+
+void CalibrationMethod::addImages(std::vector<uint16_t*> depths, std::vector<uint8_t*> colors, int w, int h,
+    std::vector<float> fxs, std::vector<float> fys, std::vector<float> pxs, std::vector<float> pys)
 {
     if (n < depths.size()) {
         n = depths.size();
@@ -26,33 +29,26 @@ void CalibrationMethod::addImages(std::vector<uint16_t*> depths,  std::vector<ui
 
         cv::Mat colorImage(h, w, CV_8UC3, color);
         cv::Mat depthImage(h, w, CV_16U, depth);
-        std::vector< cv::KeyPoint > cv_keypoints1, cv_keypoints2;
+        std::vector< cv::KeyPoint > cv_keypoints1;//, cv_keypoints2;
         cv::Mat cv_desc1;
         std::vector<float3> ptCld(h*w);
         //generate point cloud
         for (int y = 0; y < h; y++){
             for (int x = 0; x < w; x++) {
-                ptCld[y*w + x] = depth[y*w + x] ? float3((x - px)/fx * depth[y*w + x], 
-                                                         (y - py)/fy * depth[y*w + x], depth[y*w + x]) : float3(0.0f, 0.0f, 0.0f);
+                ptCld[y*w + x] = depth[y*w + x] ? float3((x - px) / fx * depth[y*w + x],
+                    (y - py) / fy * depth[y*w + x], depth[y*w + x]) : float3(0.0f, 0.0f, 0.0f);
             }
         }
         auto clampi = [](int x, int b) { return std::max(std::min(x, b - 1), 0); };
         auto cv_detect = cv::ORB();
 
         cv_detect.detect(colorImage, cv_keypoints1);
-        // only keep ones with depth
-        for (auto kp : cv_keypoints1) {
-            auto yi = clampi((int)std::round(kp.pt.y), h);
-            auto xi = clampi((int)std::round(kp.pt.x), w);
-            if (depth[yi*w + xi] && depth[yi*w + xi] < 1500)
-                cv_keypoints2.push_back(kp);
-        }
-        cv_detect.compute(colorImage, cv_keypoints2, cv_desc1);
-        keypoints[index] = cv_keypoints2;
+        cv_detect.compute(colorImage, cv_keypoints1, cv_desc1);
+        keypoints[index] = cv_keypoints1;
         desc[index] = cv_desc1;
 
-        for (int i = 0; i < cv_keypoints2.size(); i++){
-            auto kp = cv_keypoints2[i];
+        for (int i = 0; i < cv_keypoints1.size(); i++){
+            auto kp = cv_keypoints1[i];
             auto yi = clampi((int)std::round(kp.pt.y), h);
             auto xi = clampi((int)std::round(kp.pt.x), w);
             candpoints[index].push_back(ptCld[yi*w + xi]);
@@ -62,18 +58,21 @@ void CalibrationMethod::addImages(std::vector<uint16_t*> depths,  std::vector<ui
         for (int index2 = index + 1; index2 < n; index2++) {
             cv::BFMatcher matcher(cv::NORM_HAMMING, true);
             std::vector< cv::DMatch > cv_matches;
-			if (desc[index].cols != desc[index2].cols)
-				continue;
+            if (desc[index].cols != desc[index2].cols)
+                continue;
 
             matcher.match(desc[index], desc[index2], cv_matches);
             for (const auto & match : cv_matches) {
                 auto kypt1 = keypoints[index][match.queryIdx];
                 auto kypt2 = keypoints[index2][match.trainIdx];
                 auto dist = match.distance;
-                const int SCORE_DIVIDER = 8;
-                if (dist < ((desc[index].cols * 8 + (SCORE_DIVIDER - 1)) / SCORE_DIVIDER)) {
-                    points[n*index + index2].push_back(candpoints[index][match.queryIdx]);
-                    points[n*index2 + index].push_back(candpoints[index2][match.trainIdx]);
+                const int SCORE_DIVIDER = 6;
+                auto match1 = candpoints[index][match.queryIdx];
+                auto match2 = candpoints[index2][match.trainIdx];
+                if (match1.z > 1 && match2.z > 1 && match1.z < Z_THRESH && match2.z < Z_THRESH
+                    && dist < ((desc[index].cols * 8 + (SCORE_DIVIDER - 1)) / SCORE_DIVIDER)) {
+                    points[n*index + index2].push_back(match1);
+                    points[n*index2 + index].push_back(match2);
                 }
             }
         }
@@ -85,25 +84,25 @@ float4x4 CalibrationMethod::computePose(int index1, int index2)
     auto srcPoints = points[n*index1 + index2];
     auto dstPoints = points[n*index2 + index1];
 
-        Eigen::MatrixXf A( 3,srcPoints.size());
-        Eigen::MatrixXf B(3, srcPoints.size());
-        for (int i = 0; i < srcPoints.size(); i++) {
-            A.col(i) = Eigen::Vector3f(srcPoints[i].x, srcPoints[i].y, srcPoints[i].z);
-            B.col(i) = Eigen::Vector3f(dstPoints[i].x, dstPoints[i].y, dstPoints[i].z);
-        }
-        Eigen::Vector3f mean1 = A.rowwise().mean(), mean2 = B.rowwise().mean();
-        Eigen::MatrixXf A_zm = A.colwise() - mean1, B_zm = B.colwise() - mean2, C = A_zm*B_zm.transpose();
-        Eigen::JacobiSVD< Eigen::MatrixXf> svd = C.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV);
-        Eigen::Matrix3f UVt = svd.matrixU()*svd.matrixV().transpose();
-        Eigen::Vector3f v;
-        v << 1, 1, UVt.determinant();
-        Eigen::Matrix3f R = svd.matrixU()*v.asDiagonal()*svd.matrixV().transpose();
-        Eigen::Vector3f t = mean1 - R*mean2;
-        Eigen::Affine3f T(R.adjoint());
-        T.translation() = -t;
-        linalg::aliases::float3x3 laR(R.data());
-        linalg::aliases::float3 laT(t.data());
-        auto poseLA2 = linalg::pose_matrix(linalg::rotation_quat(laR), scale*laT);
+    Eigen::MatrixXf A(3, srcPoints.size());
+    Eigen::MatrixXf B(3, srcPoints.size());
+    for (int i = 0; i < srcPoints.size(); i++) {
+        A.col(i) = Eigen::Vector3f(srcPoints[i].x, srcPoints[i].y, srcPoints[i].z);
+        B.col(i) = Eigen::Vector3f(dstPoints[i].x, dstPoints[i].y, dstPoints[i].z);
+    }
+    Eigen::Vector3f mean1 = A.rowwise().mean(), mean2 = B.rowwise().mean();
+    Eigen::MatrixXf A_zm = A.colwise() - mean1, B_zm = B.colwise() - mean2, C = A_zm*B_zm.transpose();
+    Eigen::JacobiSVD< Eigen::MatrixXf> svd = C.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV);
+    Eigen::Matrix3f UVt = svd.matrixU()*svd.matrixV().transpose();
+    Eigen::Vector3f v;
+    v << 1, 1, UVt.determinant();
+    Eigen::Matrix3f R = svd.matrixU()*v.asDiagonal()*svd.matrixV().transpose();
+    Eigen::Vector3f t = mean1 - R*mean2;
+    Eigen::Affine3f T(R.adjoint());
+    T.translation() = -t;
+    linalg::aliases::float3x3 laR(R.data());
+    linalg::aliases::float3 laT(t.data());
+    auto poseLA2 = linalg::pose_matrix(linalg::rotation_quat(laR), scale*laT);
 
     return poseLA2;
 }
@@ -116,7 +115,7 @@ bool CalibrationMethod::solvePose()
     std::vector<int> visitedPose(n, -1);
 
     for (auto & pose : poses) {
-        pose =linalg::translation_matrix<float>(float3(0, 0, 0));
+        pose = linalg::translation_matrix<float>(float3(0, 0, 0));
     }
 
     for (int index = 0; index < n; index++){
@@ -124,7 +123,7 @@ bool CalibrationMethod::solvePose()
             pairs.push_back(int3(index, index2, points[n*index + index2].size()));
         }
     }
-    std::sort(pairs.begin(), pairs.end(), [](int3 a, int3 b) { return b.z > a.z;  });
+    std::sort(pairs.begin(), pairs.end(), [](int3 a, int3 b) { return a.z > b.z;  });
     for (int i = 0; i < pairs.size(); i++) {
         if (pairs[i].z && visited[pairs[i].y] < 0)
             visited[pairs[i].y] = pairs[i].x;
@@ -142,15 +141,17 @@ bool CalibrationMethod::solvePose()
             target = visited[target];
             pathStacks[index].push_back(target);
 
-        } 
+        }
     }
-    for (int index = 1; index < visited.size(); index++) {
-        float4x4 pose= poses[index];
+    
+    for (int index = 0; index < visited.size(); index++) {
+        //std::reverse(pathStacks[index].begin(), pathStacks[index].end());
+        float4x4 pose = poses[index];
         auto prevIdx = index;
-        while (pathStacks[index].size()) {
-            pose = linalg::mul(pose,computePose(pathStacks[index].front(), prevIdx));
-            prevIdx = pathStacks[index].back();
-            pathStacks[index].erase(pathStacks[index].begin()+pathStacks[index].size()-1);
+        while (prevIdx != 0) {
+            pose = linalg::mul(computePose(pathStacks[index].front(), prevIdx),pose);
+            prevIdx = pathStacks[index].front();
+            pathStacks[index].erase(pathStacks[index].begin());
         }
         poses[index] = pose;
     }
