@@ -9,9 +9,15 @@ using linalg::aliases::float4x4;
 
 class CalibrationMethod {
 public:
-    //takes a list of images for depth/color, and their calibration
-    void addImages(std::vector<uint16_t*> depths, std::vector<uint8_t*> colors, int w, int h,
-        std::vector<float> fxs, std::vector<float> fys, std::vector<float> pxs, std::vector<float> pys);
+    // calibration data for all cameras
+    CalibrationMethod(const int w, const int h,
+        const std::vector<float> &fxs,
+        const std::vector<float> &fys,
+        const std::vector<float> &pxs,
+        const std::vector<float> &pys)
+        : w(w), h(h), fxs(fxs), fys(fys), pxs(pxs), pys(pys) {}
+    //takes a list of images for depth/color
+    void addImages(std::vector<uint16_t*> depths, std::vector<uint8_t*> colors);
     bool solvePose();
     float4x4 getPose(int index);
     void setScale(float s) { scale = s; }
@@ -21,4 +27,10 @@ private:
     std::vector< float4x4 > poses;
     int n = 0;
     float scale = 1.0f;
+    int w;
+    int h;
+    std::vector<float> fxs;
+    std::vector<float> fys;
+    std::vector<float> pxs;
+    std::vector<float> pys;
 };

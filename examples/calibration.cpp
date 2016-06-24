@@ -2,16 +2,29 @@
 #include <opencv\cv.h>
 #include <Eigen\Dense>
 
-const int Z_THRESH = 2000;
+const int Z_THRESH = 1500;
+const int SCORE_DIVIDER = 6;
+const float REPROJ_CONV = 25;
+const int ITER_MAX = 250;
 
-void CalibrationMethod::addImages(std::vector<uint16_t*> depths, std::vector<uint8_t*> colors, int w, int h,
-    std::vector<float> fxs, std::vector<float> fys, std::vector<float> pxs, std::vector<float> pys)
+static float computeReprojectionError(float3 target, float fx, float fy, float ppx, float ppy, float3 source, float4x4 & pose)
+{
+    using linalg::aliases::float4;
+    auto tPt = float3(ppx,ppy,0.0) + (target / target.z * fx);
+    float4 depth_point_h = { source.x, source.y, source.z, 1.0f };
+    auto src_tPt_Frame = linalg::mul(pose, depth_point_h);
+    auto sPt = float4(ppx, ppy, 0.0,0.0) + (src_tPt_Frame / src_tPt_Frame.z * fx);
+
+    auto sqr = [](float x){return x*x; };
+    return std::sqrtf(sqr(tPt[0] - sPt[0]) + sqr(tPt[1] - sPt[1]));
+}
+
+void CalibrationMethod::addImages(std::vector<uint16_t*> depths, std::vector<uint8_t*> colors)
 {
     if (n < depths.size()) {
         n = depths.size();
         points.resize(n*n);
-        poses.resize(n);
-        poses[0] = linalg::translation_matrix<float>(float3(0, 0, 0));
+        poses.resize(n, linalg::translation_matrix<float>(float3(0, 0, 0)));
     }
 
     std::vector<std::vector<cv::KeyPoint>> keypoints(n);
@@ -66,7 +79,6 @@ void CalibrationMethod::addImages(std::vector<uint16_t*> depths, std::vector<uin
                 auto kypt1 = keypoints[index][match.queryIdx];
                 auto kypt2 = keypoints[index2][match.trainIdx];
                 auto dist = match.distance;
-                const int SCORE_DIVIDER = 6;
                 auto match1 = candpoints[index][match.queryIdx];
                 auto match2 = candpoints[index2][match.trainIdx];
                 if (match1.z > 1 && match2.z > 1 && match1.z < Z_THRESH && match2.z < Z_THRESH
@@ -81,30 +93,83 @@ void CalibrationMethod::addImages(std::vector<uint16_t*> depths, std::vector<uin
 
 float4x4 CalibrationMethod::computePose(int index1, int index2)
 {
-    auto srcPoints = points[n*index1 + index2];
-    auto dstPoints = points[n*index2 + index1];
+    const auto &srcRef = points[n*index1 + index2];
+    const auto &dstRef = points[n*index2 + index1];
+    std::vector<float> errors(srcRef.size());
 
-    Eigen::MatrixXf A(3, srcPoints.size());
-    Eigen::MatrixXf B(3, srcPoints.size());
-    for (int i = 0; i < srcPoints.size(); i++) {
-        A.col(i) = Eigen::Vector3f(srcPoints[i].x, srcPoints[i].y, srcPoints[i].z);
-        B.col(i) = Eigen::Vector3f(dstPoints[i].x, dstPoints[i].y, dstPoints[i].z);
-    }
-    Eigen::Vector3f mean1 = A.rowwise().mean(), mean2 = B.rowwise().mean();
-    Eigen::MatrixXf A_zm = A.colwise() - mean1, B_zm = B.colwise() - mean2, C = A_zm*B_zm.transpose();
-    Eigen::JacobiSVD< Eigen::MatrixXf> svd = C.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV);
-    Eigen::Matrix3f UVt = svd.matrixU()*svd.matrixV().transpose();
-    Eigen::Vector3f v;
-    v << 1, 1, UVt.determinant();
-    Eigen::Matrix3f R = svd.matrixU()*v.asDiagonal()*svd.matrixV().transpose();
-    Eigen::Vector3f t = mean1 - R*mean2;
-    Eigen::Affine3f T(R.adjoint());
-    T.translation() = -t;
-    linalg::aliases::float3x3 laR(R.data());
-    linalg::aliases::float3 laT(t.data());
-    auto poseLA2 = linalg::pose_matrix(linalg::rotation_quat(laR), scale*laT);
+    //local copies of points
+    //auto srcPoints = points[n*index1 + index2];
+    //auto dstPoints = points[n*index2 + index1];
 
-    return poseLA2;
+    //storage
+    float4x4 bestPose =  linalg::translation_matrix<float>(float3(0, 0, 0));
+    float bestPoseErr = INT_MAX;
+    int bestPoseIter = -1;
+
+    //defaults
+    float reprojError = 0.0f;
+    float REPROJ_FILTER = 3e38;
+    std::vector<float3> srcPoints, dstPoints;
+
+    int iter_cnt = 0;
+    do {
+        srcPoints.clear();
+        dstPoints.clear();
+        //filter points
+        for (int i = 0; i < srcRef.size(); i++) {
+            auto err = computeReprojectionError(srcRef[i], fxs[index1], fys[index1], pxs[index1], pys[index1], dstRef[i], bestPose);
+            if (err < REPROJ_FILTER) {
+                srcPoints.push_back(srcRef[i]);
+                dstPoints.push_back(dstRef[i]);
+            }
+        }
+
+        if (srcPoints.size() < 3 || dstPoints.size() != srcPoints.size())
+            break;
+
+        Eigen::MatrixXf A(3, srcPoints.size());
+        Eigen::MatrixXf B(3, srcPoints.size());
+        for (int i = 0; i < srcPoints.size(); i++) {
+            A.col(i) = Eigen::Vector3f(srcPoints[i].x, srcPoints[i].y, srcPoints[i].z);
+            B.col(i) = Eigen::Vector3f(dstPoints[i].x, dstPoints[i].y, dstPoints[i].z);
+        }
+        Eigen::Vector3f mean1 = A.rowwise().mean(), mean2 = B.rowwise().mean();
+        Eigen::MatrixXf A_zm = A.colwise() - mean1, B_zm = B.colwise() - mean2, C = A_zm*B_zm.transpose();
+        Eigen::JacobiSVD< Eigen::MatrixXf> svd = C.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV);
+        Eigen::Matrix3f UVt = svd.matrixU()*svd.matrixV().transpose();
+        Eigen::Vector3f v;
+        v << 1, 1, UVt.determinant();
+        Eigen::Matrix3f R = svd.matrixU()*v.asDiagonal()*svd.matrixV().transpose();
+        Eigen::Vector3f t = mean1 - R*mean2;
+        Eigen::Affine3f T(R.adjoint());
+        T.translation() = -t;
+        linalg::aliases::float3x3 laR(R.data());
+        linalg::aliases::float3 laT(t.data());
+        auto poseLA2 = linalg::pose_matrix(linalg::rotation_quat(laR), scale*laT);
+        //errors.resize(srcPoints.size());
+        //for (int i = 0; i < srcPoints.size(); i++) {
+        //    errors[i] = computeReprojectionError(srcPoints[i], fxs[index1], fys[index1], pxs[index1], pys[index1], dstPoints[i], poseLA2);
+        //}
+        //std::sort(errors.begin(), errors.end());
+        //reprojError = errors[(int)(errors.size()*0.5f)];
+
+        iter_cnt++;
+    
+        auto newPoseErr = 0;
+        for (int i = 0; i < srcRef.size(); i++) {
+            auto err = computeReprojectionError(srcRef[i], fxs[index1], fys[index1], pxs[index1], pys[index1], dstRef[i], poseLA2);
+            newPoseErr += err;
+        }
+        if (newPoseErr < bestPoseErr) {
+            bestPoseErr = newPoseErr;
+            bestPose = poseLA2;
+            bestPoseIter = iter_cnt;
+        }
+    
+        REPROJ_FILTER = std::max(REPROJ_CONV, bestPoseErr/srcRef.size());
+    } while ((iter_cnt < ITER_MAX && bestPoseErr / srcRef.size() > REPROJ_CONV));
+    printf("%d %d %d\t%f\t%d\t%d\t%d\n", bestPoseIter, index1, index2, bestPoseErr / srcRef.size(), iter_cnt, srcPoints.size(), srcRef.size());
+    return bestPose;
 }
 
 bool CalibrationMethod::solvePose()
@@ -140,13 +205,12 @@ bool CalibrationMethod::solvePose()
         while (target != 0)  {
             target = visited[target];
             pathStacks[index].push_back(target);
-
         }
     }
     
     for (int index = 0; index < visited.size(); index++) {
         //std::reverse(pathStacks[index].begin(), pathStacks[index].end());
-        float4x4 pose = poses[index];
+        float4x4 pose = linalg::translation_matrix<float>(float3(0, 0, 0));
         auto prevIdx = index;
         while (prevIdx != 0) {
             pose = linalg::mul(computePose(pathStacks[index].front(), prevIdx),pose);

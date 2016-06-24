@@ -47,12 +47,12 @@ int main(int argc, char * argv[]) try
     for(auto dev : devices)
     {
         std::cout << "Starting " << dev->get_name() << "... ";
-		dev->enable_stream(rs::stream::depth, 320, 240, rs::format::z16, 30);
+		dev->enable_stream(rs::stream::depth, 480, 360, rs::format::z16, 30);
 		dev->enable_stream(rs::stream::color, 640, 480, rs::format::rgb8, 30);
 
         dev->start();
         dev->set_option(rs::option::r200_lr_auto_exposure_enabled, 1.0);
-        rs_apply_depth_control_preset((rs_device*)dev,5 ); //4 or 5
+        rs_apply_depth_control_preset((rs_device*)dev,4 ); //4 or 5
         std::cout << "done." << std::endl;
     }
 
@@ -75,7 +75,27 @@ int main(int argc, char * argv[]) try
     // Does not account for correct aspect ratios
     auto perTextureWidth = windowWidth / devices.size();
     auto perTextureHeight = 480;
-    CalibrationMethod calib;
+
+    int h_cam, w_cam;
+    std::vector<float> fxs;
+    std::vector<float> fys;
+    std::vector<float> pxs;
+    std::vector<float> pys;
+    for (auto dev : devices)
+    {
+        const auto c = dev->get_stream_intrinsics(rs::stream::rectified_color);
+        const auto d = dev->get_stream_intrinsics(rs::stream::depth_aligned_to_rectified_color);
+
+        fxs.push_back(c.fx);
+        fys.push_back(c.fy);
+        pxs.push_back(c.ppx);
+        pys.push_back(c.ppy);
+        w_cam = c.width;
+        h_cam = c.height;
+
+    }
+
+    CalibrationMethod calib(w_cam, h_cam, fxs, fys, pxs, pys);
 
 
     while (!glfwWindowShouldClose(win) && !glfwWindowShouldClose(winCld))
@@ -98,30 +118,18 @@ int main(int argc, char * argv[]) try
         int i=0, x=0;
         std::vector<uint16_t*> depths;
         std::vector<uint8_t*> colors;
-        int h_cam,  w_cam;
-        std::vector<float> fxs; 
-        std::vector<float> fys; 
-        std::vector<float> pxs;
-        std::vector<float> pys;
+
         for (auto dev : devices)
         {
             dev->wait_for_frames();
-            const auto c = dev->get_stream_intrinsics(rs::stream::rectified_color), d = dev->get_stream_intrinsics(rs::stream::depth_aligned_to_rectified_color);
             buffers[i++].show(*dev, rs::stream::rectified_color, x, 0, perTextureWidth, perTextureHeight);
             buffers[i++].show(*dev, rs::stream::depth_aligned_to_rectified_color, x, perTextureHeight, perTextureWidth, perTextureHeight);
             x += perTextureWidth;
 
             depths.push_back((uint16_t*)dev->get_frame_data(rs::stream::depth_aligned_to_rectified_color));
             colors.push_back((uint8_t*)dev->get_frame_data(rs::stream::rectified_color));
-            fxs.push_back(c.fx);
-            fys.push_back(c.fy);
-            pxs.push_back(c.ppx);
-            pys.push_back(c.ppy);
-            w_cam = c.width;
-            h_cam = c.height;
-
         }
-        calib.addImages(depths, colors, w_cam, h_cam, fxs, fys, pxs, pys);
+        calib.addImages(depths, colors);
         float scale1 = devices[0]->get_depth_scale();
         calib.setScale(scale1);
         auto calibrated = calib.solvePose();
