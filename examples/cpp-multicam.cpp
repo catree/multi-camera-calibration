@@ -94,8 +94,9 @@ int main(int argc, char * argv[]) try
         h_cam = c.height;
 
     }
-
+    float scale1 = devices[0]->get_depth_scale();
     CalibrationMethod calib(w_cam, h_cam, fxs, fys, pxs, pys);
+    calib.setScale(scale1);
 
 
     while (!glfwWindowShouldClose(win) && !glfwWindowShouldClose(winCld))
@@ -129,10 +130,19 @@ int main(int argc, char * argv[]) try
             depths.push_back((uint16_t*)dev->get_frame_data(rs::stream::depth_aligned_to_rectified_color));
             colors.push_back((uint8_t*)dev->get_frame_data(rs::stream::rectified_color));
         }
-        calib.addImages(depths, colors);
-        float scale1 = devices[0]->get_depth_scale();
-        calib.setScale(scale1);
-        auto calibrated = calib.solvePose();
+
+        static int num_frames = 0;
+        const int num_frame_calib = 285;
+        if (num_frames < num_frame_calib) {
+            calib.addImages(depths, colors);
+            auto calibrated = calib.solvePose();
+            if (num_frames == num_frame_calib - 1)        
+                for (auto dev : devices)
+                {
+                    rs_apply_depth_control_preset((rs_device*)dev, 2); //4 or 5
+                }
+            num_frames++;
+        }
         glPopMatrix();
         glfwSwapBuffers(win);
 

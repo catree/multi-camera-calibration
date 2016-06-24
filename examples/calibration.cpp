@@ -2,7 +2,7 @@
 #include <opencv\cv.h>
 #include <Eigen\Dense>
 
-const int Z_THRESH = 1500;
+const int Z_THRESH = 2000;
 const int SCORE_DIVIDER = 6;
 const float REPROJ_CONV = 25;
 const int ITER_MAX = 0;
@@ -107,6 +107,8 @@ float4x4 CalibrationMethod::computePose(int index1, int index2)
     int bestPoseIter = -1;
 
     //defaults
+    float4x4 poseLA2 = linalg::translation_matrix<float>(float3(0, 0, 0));
+
     float reprojError = 0.0f;
     float REPROJ_FILTER = 3e38;
     std::vector<float3> srcPoints, dstPoints;
@@ -117,7 +119,7 @@ float4x4 CalibrationMethod::computePose(int index1, int index2)
         dstPoints.clear();
         //filter points
         for (int i = 0; i < srcRef.size(); i++) {
-            auto err = computeReprojectionError(srcRef[i], fxs[index1], fys[index1], pxs[index1], pys[index1], dstRef[i], bestPose);
+            auto err = computeReprojectionError(srcRef[i], fxs[index1], fys[index1], pxs[index1], pys[index1], dstRef[i], poseLA2);
             if (err < REPROJ_FILTER) {
                 srcPoints.push_back(srcRef[i]);
                 dstPoints.push_back(dstRef[i]);
@@ -145,7 +147,7 @@ float4x4 CalibrationMethod::computePose(int index1, int index2)
         T.translation() = -t;
         linalg::aliases::float3x3 laR(R.data());
         linalg::aliases::float3 laT(t.data());
-        auto poseLA2 = linalg::pose_matrix(linalg::rotation_quat(laR), scale*laT);
+        poseLA2 = linalg::pose_matrix(linalg::rotation_quat(laR), scale*laT);
         //errors.resize(srcPoints.size());
         //for (int i = 0; i < srcPoints.size(); i++) {
         //    errors[i] = computeReprojectionError(srcPoints[i], fxs[index1], fys[index1], pxs[index1], pys[index1], dstPoints[i], poseLA2);
@@ -166,7 +168,7 @@ float4x4 CalibrationMethod::computePose(int index1, int index2)
             bestPoseIter = iter_cnt;
         }
     
-        REPROJ_FILTER = std::max(REPROJ_CONV, bestPoseErr/srcRef.size());
+        REPROJ_FILTER = std::max(REPROJ_CONV, std::min(bestPoseErr/srcRef.size() -10.0f,REPROJ_FILTER));
     } while ((iter_cnt < ITER_MAX && bestPoseErr / srcRef.size() > REPROJ_CONV));
     printf("%d %d %d\t%f\t%d\t%d\t%d\n", bestPoseIter, index1, index2, bestPoseErr / srcRef.size(), iter_cnt, srcPoints.size(), srcRef.size());
     return bestPose;
