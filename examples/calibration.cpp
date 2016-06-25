@@ -3,20 +3,28 @@
 #include <Eigen\Dense>
 
 const int Z_THRESH = 2000;
-const int SCORE_DIVIDER = 6;
-const float REPROJ_CONV = 25;
-const int ITER_MAX = 0;
+const int SCORE_DIVIDER = 5;
+const float REPROJ_CONV = 10;
+const float REPROJ_STEP = 2.0f;
+const int ITER_MAX = 25;
 
-static float computeReprojectionError(float3 target, float fx, float fy, float ppx, float ppy, float3 source, float4x4 & pose)
+float CalibrationMethod::computeReprojectionError(float3 target, float fx, float fy, float ppx, float ppy, float3 source, float4x4 & pose)
 {
     using linalg::aliases::float4;
-    auto tPt = float3(ppx,ppy,0.0) + ((target / target.z) * fx);
+    source = source * scale;
+    target = target*scale;
+    float4 depth_point_s = { target.x, target.y, target.z, 1.0f };
+    auto tX = ppx + fx*(target[0] / target[2]);
+    auto tY = ppy + fy*(target[1] / target[2]);
+
     float4 depth_point_h = { source.x, source.y, source.z, 1.0f };
     auto src_tPt_Frame = linalg::mul(pose, depth_point_h);
-    auto sPt = float4(ppx, ppy, 0.0,0.0) + ((src_tPt_Frame / src_tPt_Frame.z) * fx);
+    auto sX = ppx + fx*(src_tPt_Frame[0] / src_tPt_Frame[2]);
+    auto sY = ppy + fy*(src_tPt_Frame[1] / src_tPt_Frame[2]);
 
+    auto diff = linalg::abs(depth_point_s - src_tPt_Frame);
     auto sqr = [](float x){return x*x; };
-    return std::sqrtf(sqr(tPt[0] - sPt[0]) + sqr(tPt[1] - sPt[1]));
+    return std::sqrtf(sqr(sX - tX) + sqr(sY - tY));
 }
 
 void CalibrationMethod::addImages(std::vector<uint16_t*> depths, std::vector<uint8_t*> colors)
@@ -119,7 +127,7 @@ float4x4 CalibrationMethod::computePose(int index1, int index2)
         dstPoints.clear();
         //filter points
         for (int i = 0; i < srcRef.size(); i++) {
-            auto err = computeReprojectionError(srcRef[i], fxs[index1], fys[index1], pxs[index1], pys[index1], dstRef[i], poseLA2);
+            auto err = computeReprojectionError(srcRef[i], fxs[index1], fys[index1], pxs[index1], pys[index1], dstRef[i], bestPose);
             if (err < REPROJ_FILTER) {
                 srcPoints.push_back(srcRef[i]);
                 dstPoints.push_back(dstRef[i]);
@@ -168,7 +176,7 @@ float4x4 CalibrationMethod::computePose(int index1, int index2)
             bestPoseIter = iter_cnt;
         }
     
-        REPROJ_FILTER = std::max(REPROJ_CONV, std::min(bestPoseErr/srcRef.size() -10.0f,REPROJ_FILTER));
+        REPROJ_FILTER = std::max(REPROJ_CONV, std::min(bestPoseErr/srcRef.size()-REPROJ_STEP,REPROJ_FILTER));
     } while ((iter_cnt < ITER_MAX && bestPoseErr / srcRef.size() > REPROJ_CONV));
     printf("%d %d %d\t%f\t%d\t%d\t%d\n", bestPoseIter, index1, index2, bestPoseErr / srcRef.size(), iter_cnt, srcPoints.size(), srcRef.size());
     return bestPose;

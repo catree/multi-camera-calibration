@@ -23,6 +23,7 @@ public:
     void setScale(float s) { scale = s; }
 private:
     float4x4 computePose(int index1, int index2);
+    float CalibrationMethod::computeReprojectionError(float3 target, float fx, float fy, float ppx, float ppy, float3 source, float4x4 & pose);
     std::vector< std::vector<float3> > points;
     std::vector< float4x4 > poses;
     int n = 0;
